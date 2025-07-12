@@ -74,6 +74,41 @@ enable_llm_anchor: true
 # 每个文本块生成的主题锚点数量
 anchor_keywords_count: 3
 
+# ==================== 语义检测配置 (Semantic Detection) ====================
+# V2新增 - 混合式QA检测配置
+
+# 启用语义检测 (可选，默认: true)
+# 🎯 核心创新：使用嵌入模型进行语义相似度检测，识别隐含QA对
+enable_semantic_detection: true
+
+# 语义相似度阈值 (可选，默认: 0.65)
+# 判定问答对的最小相似度分数，范围 0.0-1.0
+# 建议：0.65 平衡准确率和召回率
+semantic_similarity_threshold: 0.65
+
+# 潜在问题最大长度 (可选，默认: 50)
+# 用于识别无明显前缀的简短问题
+potential_question_max_length: 50
+
+# 嵌入模型名称 (可选)
+# 默认使用多语言模型，支持中英文
+embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+# ==================== 链式Prompt配置 (Chain Prompt Processing) ====================
+# V2新增 - 超长答案处理配置
+
+# 最大答案长度 (可选，默认: 3000)
+# 触发链式处理的答案字符数阈值
+max_answer_length: 3000
+
+# 答案分块大小 (可选，默认: 2000)
+# 链式处理时每个块的大小
+answer_chunk_size: 2000
+
+# 摘要长度 (可选，默认: 50)
+# 每个分块生成的摘要字数
+summary_length: 50
+
 # ==================== Token 管理配置 (Token Management) ====================
 # 性能配置项 - 控制 Token 使用和性能优化
 
@@ -160,4 +195,6 @@ max_workers: 3  # 🎯
 # MAX_BLOCK_SIZE, MIN_BLOCK_SIZE, EXTRACT_RATIO
 # QA_ALLOWANCE_RATIO, ENABLE_SLIDING_CONTEXT, ENABLE_LLM_ANCHOR
 # ANCHOR_KEYWORDS_COUNT, ENABLE_QA_FILTER, LOG_LEVEL
+# ENABLE_SEMANTIC_DETECTION, SEMANTIC_SIMILARITY_THRESHOLD
+# MAX_ANSWER_LENGTH, ANSWER_CHUNK_SIZE, SUMMARY_LENGTH
 # =============================================================================

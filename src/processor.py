@@ -354,6 +354,8 @@ class QAExtractionProcessor:
     def _process_single_block(self, block_data: Dict[str, Any], block_idx: int, enable_llm_anchor: bool) -> Dict[str, Any]:
         """Process a single text block and extract Q&A pairs.
         
+        V2增强：集成链式Prompt处理超长答案
+        
         Args:
             block_data: Text block data with content and metadata
             block_idx: Index of the block being processed
@@ -425,6 +427,32 @@ class QAExtractionProcessor:
                 qa_pairs, block_content, self.text_processor
             )
             
+            # V2增强：使用链式Prompt处理超长答案
+            if self.chain_prompt_processor:
+                enhanced_pairs = []
+                for pair in processed_pairs:
+                    # 检查答案是否超长
+                    if len(pair.get('answer', '')) > getattr(self.config, 'max_answer_length', 3000):
+                        self.logger.info(f"🔗 Processing ultra-long answer in block {block_idx + 1} using chain prompt")
+                        
+                        # 使用链式处理
+                        enhanced_result = self.chain_prompt_processor.process_long_qa(
+                            pair['question'], 
+                            pair['answer']
+                        )
+                        
+                        # 更新问答对
+                        pair['answer'] = enhanced_result.get('answer', pair['answer'])
+                        pair['processing_method'] = enhanced_result.get('processing_method', 'direct')
+                        if enhanced_result.get('chunks_processed'):
+                            pair['chunks_processed'] = enhanced_result['chunks_processed']
+                        
+                        self.logger.debug(f"Chain processing completed: {enhanced_result.get('chunks_processed', 0)} chunks")
+                    
+                    enhanced_pairs.append(pair)
+                
+                processed_pairs = enhanced_pairs
+            
             # Add metadata to Q&A pairs
             for pair in processed_pairs:
                 # Add sliding context if enabled
@@ -445,6 +473,7 @@ class QAExtractionProcessor:
                         f"Successfully extracted Q&A pair from block {block_idx + 1}:\n\n"
                         f"Question: {pair['question']}\n\n"
                         f"Answer: {pair['answer']}\n\n"
+                        f"Processing method: {pair.get('processing_method', 'direct')}\n"
                         f"Source block:\n{block_content}\n\n"
                         f"{'='*80}"
                     )
