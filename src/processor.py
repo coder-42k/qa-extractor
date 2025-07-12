@@ -10,6 +10,12 @@ from tqdm import tqdm
 from .config import Config
 from .core import PDFProcessor, TextProcessor, QAExtractor, LLMClient
 from .core.smart_block_processor import SmartBlockProcessor
+# 新增导入
+try:
+    from .core.chain_prompt_processor import ChainPromptProcessor
+    CHAIN_PROMPT_AVAILABLE = True
+except ImportError:
+    CHAIN_PROMPT_AVAILABLE = False
 from .utils import setup_logger, setup_extraction_loggers, save_single_jsonl_item, ensure_dir
 
 
@@ -53,6 +59,8 @@ class QAExtractionProcessor:
             raise
         
         # SmartBlockProcessor with enhanced features
+        # 检查是否启用语义检测
+        enable_semantic = getattr(config, 'enable_semantic_detection', True)
         self.smart_block_processor = SmartBlockProcessor(
             text_processor=self.text_processor,
             llm_client=self.llm_client,
@@ -60,8 +68,22 @@ class QAExtractionProcessor:
             max_block_size=config.max_block_size,
             enable_sliding_context=config.enable_sliding_context,
             enable_llm_anchor=config.enable_llm_anchor,
-            anchor_keywords_count=config.anchor_keywords_count
+            anchor_keywords_count=config.anchor_keywords_count,
+            enable_semantic_detection=enable_semantic
         )
+        
+        # 初始化链式Prompt处理器
+        if CHAIN_PROMPT_AVAILABLE:
+            self.chain_prompt_processor = ChainPromptProcessor(
+                llm_client=self.llm_client,
+                max_answer_length=getattr(config, 'max_answer_length', 3000),
+                chunk_size=getattr(config, 'answer_chunk_size', 2000),
+                summary_length=getattr(config, 'summary_length', 50)
+            )
+            self.logger.info("✅ Chain prompt processor initialized")
+        else:
+            self.chain_prompt_processor = None
+            self.logger.warning("Chain prompt processor not available")
         
         # **🚀 PERFORMANCE: Batch processing configuration**
         self.batch_size = getattr(config, 'batch_size', 5)  # Default batch size

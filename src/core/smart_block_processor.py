@@ -2,18 +2,29 @@
 
 import re
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .text_processor import TextProcessor
 from .llm_client import LLMClient
+# 新增导入
+try:
+    from .semantic_qa_detector import SemanticQADetector
+    SEMANTIC_DETECTION_AVAILABLE = True
+except ImportError:
+    SEMANTIC_DETECTION_AVAILABLE = False
+    logging.warning("SemanticQADetector not available, using rule-based detection only")
 
 logger = logging.getLogger(__name__)
 
 
 class SmartBlockProcessor:
     """
-    负责智能文本分块 (V1 精简版)。
-    核心策略：结构化分块 -> 智能合并 -> LLM生成Anchor -> 添加滑动上下文
+    负责智能文本分块 (V2 增强版)。
+    核心策略：结构化分块 -> 语义QA检测 -> 智能合并 -> LLM生成Anchor -> 添加滑动上下文
+    
+    V2新增特性：
+    1. 混合式QA检测（规则+语义）
+    2. 更智能的边界判定
     """
     
     def __init__(self,
@@ -24,7 +35,8 @@ class SmartBlockProcessor:
                  qa_allowance_ratio: float = 1.2,
                  enable_sliding_context: bool = False,
                  enable_llm_anchor: bool = False,
-                 anchor_keywords_count: int = 3):
+                 anchor_keywords_count: int = 3,
+                 enable_semantic_detection: bool = True):
         
         self.text_processor = text_processor
         self.llm_client = llm_client
@@ -39,6 +51,19 @@ class SmartBlockProcessor:
         self.enable_sliding_context = enable_sliding_context
         self.enable_llm_anchor = enable_llm_anchor
         self.anchor_keywords_count = anchor_keywords_count
+        self.enable_semantic_detection = enable_semantic_detection
+        
+        # 初始化语义QA检测器
+        if self.enable_semantic_detection and SEMANTIC_DETECTION_AVAILABLE:
+            try:
+                self.semantic_detector = SemanticQADetector()
+                self.logger.info("✅ Semantic QA detection enabled")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize SemanticQADetector: {e}")
+                self.semantic_detector = None
+                self.enable_semantic_detection = False
+        else:
+            self.semantic_detector = None
         
         # 复用 TextProcessor 中的模式定义
         self.direct_question_patterns = [
@@ -71,15 +96,23 @@ class SmartBlockProcessor:
         """
         主入口：综合分层策略处理文档并生成文本块。
         返回的每个块是字典，包含 'content' 和可选的 'anchor', 'sliding_context'。
+        
+        V2增强：集成语义QA检测
         """
         if not text:
             return []
 
-        # 1. 第一层：基于结构的硬分块
-        self.logger.info("Step 1: Starting structural blocking...")
+        # 1. 第一层：基于结构的硬分块（增强版）
+        self.logger.info("Step 1: Starting enhanced structural blocking...")
         paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        structural_blocks = self._hard_block_by_structure(paragraphs)
-        self.logger.info(f"Step 1: Generated {len(structural_blocks)} initial structural blocks.")
+        
+        # 如果启用语义检测，使用增强的分块策略
+        if self.semantic_detector and self.enable_semantic_detection:
+            structural_blocks = self._enhanced_block_by_structure(paragraphs)
+            self.logger.info(f"Step 1: Generated {len(structural_blocks)} blocks using semantic detection.")
+        else:
+            structural_blocks = self._hard_block_by_structure(paragraphs)
+            self.logger.info(f"Step 1: Generated {len(structural_blocks)} blocks using rule-based detection.")
 
         # 2. 第二层：智能合并
         self.logger.info("Step 2: Starting adaptive merging...")
@@ -151,6 +184,52 @@ class SmartBlockProcessor:
             blocks.append("\n\n".join(current_block_paras))
             
         return blocks
+
+    def _enhanced_block_by_structure(self, paragraphs: List[str]) -> List[str]:
+        """
+        增强版的结构分块：集成语义QA检测
+        """
+        # 使用语义检测器识别QA对
+        qa_pairs = self.semantic_detector.detect_qa_pairs(paragraphs)
+        
+        if not qa_pairs:
+            # 如果没有检测到QA对，回退到原始方法
+            return self._hard_block_by_structure(paragraphs)
+        
+        blocks = []
+        last_end = -1
+        
+        for start_idx, end_idx in qa_pairs:
+            # 处理QA对之前的内容
+            if start_idx > last_end + 1:
+                # 有未包含在QA对中的段落
+                non_qa_block = "\n\n".join(paragraphs[last_end + 1:start_idx])
+                if non_qa_block.strip():
+                    blocks.append(non_qa_block)
+            
+            # 添加QA对作为一个块
+            qa_block = "\n\n".join(paragraphs[start_idx:end_idx + 1])
+            blocks.append(qa_block)
+            last_end = end_idx
+        
+        # 处理最后的剩余内容
+        if last_end < len(paragraphs) - 1:
+            remaining_block = "\n\n".join(paragraphs[last_end + 1:])
+            if remaining_block.strip():
+                blocks.append(remaining_block)
+        
+        # 记录语义检测的效果
+        rule_based_count = len([p for p in paragraphs if self._has_qa_markers(p)])
+        semantic_extra = len(qa_pairs) - rule_based_count
+        if semantic_extra > 0:
+            self.logger.info(f"🎯 Semantic detection found {semantic_extra} additional QA pairs beyond rule-based detection")
+        
+        return blocks
+
+    def _has_qa_markers(self, text: str) -> bool:
+        """检查文本是否包含QA标记"""
+        all_patterns = self.direct_question_patterns + self.indirect_question_patterns + self.answer_patterns
+        return any(re.search(p, text) for p in all_patterns)
 
     def _adaptive_merge_blocks(self, blocks_content: List[str]) -> List[str]:
         """智能合并。将小块合并到目标长度范围。"""
